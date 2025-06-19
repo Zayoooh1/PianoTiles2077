@@ -1,10 +1,17 @@
 import pygame
 import math # For potential future sound generation
 import array # For creating sound buffer
+import mido # For MIDI support
+import tkinter as tk
+from tkinter import filedialog
 
 # Initialize Pygame
 pygame.init()
 pygame.mixer.init() # Initialize the mixer
+try:
+    pygame.font.init() # Ensure font module is initialized
+except Exception:
+    pass # Should already be covered by pygame.init()
 
 # Placeholder sound creation
 try:
@@ -70,6 +77,21 @@ DARK_GRAY = (100, 100, 100)
 BACKGROUND_COLOR = (230, 230, 250)
 PRESSED_WHITE_KEY_COLOR = (220, 220, 220)
 PRESSED_BLACK_KEY_COLOR = (50, 50, 50)
+
+# Button parameters
+BUTTON_COLOR = (100, 149, 237)  # Cornflower blue
+BUTTON_TEXT_COLOR = (255, 255, 255)
+BUTTON_RECT = pygame.Rect(20, 20, 150, 50) # x, y, width, height
+BUTTON_TEXT = "Import MIDI"
+BUTTON_FONT = pygame.font.Font(None, 30) # Default font, size 30
+
+# Global variable for MIDI path
+loaded_midi_path = None
+parsed_midi_sequence = []
+current_midi_playback_time = 0.0
+midi_playing = False
+midi_sequence_current_event_index = 0
+playback_start_system_time = 0
 
 # Keyboard parameters
 OCTAVES = 2
@@ -183,6 +205,65 @@ def draw_black_keys(surface, active_pressed_keys):
         )
         pygame.draw.rect(surface, color, key_rect)
 
+# Function to parse MIDI file
+def parse_midi_file(filepath):
+    global parsed_midi_sequence, midi_playing, current_midi_playback_time, active_pressed_keys
+    global midi_sequence_current_event_index, playback_start_system_time # Add new globals
+    try:
+        mid = mido.MidiFile(filepath)
+        parsed_midi_sequence = []
+        absolute_time_ms = 0
+        # MIDI note for C4 (middle C) is 60.
+        # Our piano key 0 (C1 visual on a 2-octave C4-B5 mapping) maps to MIDI 60.
+        # Our piano key 23 (B2 visual) maps to MIDI 83.
+        MIDI_NOTE_OFFSET = 60 # MIDI note 60 (C4) will map to our piano key index 0
+
+        for msg in mid: # Iterating MidiFile directly yields messages chronologically from all tracks
+            absolute_time_ms += int(msg.time * 1000) # Convert delta time in seconds to absolute milliseconds
+
+            if not msg.is_meta: # Filter out meta messages
+                if msg.type == 'note_on' and msg.velocity > 0:
+                    piano_key_index = msg.note - MIDI_NOTE_OFFSET
+                    if 0 <= piano_key_index < (OCTAVES * 12): # Check if the note is within our N-octave range
+                        parsed_midi_sequence.append({'time_ms': absolute_time_ms, 'type': 'note_on', 'key': piano_key_index, 'velocity': msg.velocity})
+                elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
+                    piano_key_index = msg.note - MIDI_NOTE_OFFSET
+                    if 0 <= piano_key_index < (OCTAVES * 12):
+                        parsed_midi_sequence.append({'time_ms': absolute_time_ms, 'type': 'note_off', 'key': piano_key_index})
+
+        # Sort by time, mido iteration should be chronological, but good practice.
+        parsed_midi_sequence.sort(key=lambda x: x['time_ms'])
+
+        if parsed_midi_sequence:
+            print(f"DEBUG: Parsed {len(parsed_midi_sequence)} MIDI events from {filepath}.")
+            midi_playing = True
+            current_midi_playback_time = 0.0
+            midi_sequence_current_event_index = 0
+            playback_start_system_time = pygame.time.get_ticks()
+            active_pressed_keys.clear()
+        else:
+            print(f"DEBUG: No playable notes found in MIDI file or notes are outside the {OCTAVES*12}-key range (MIDI {MIDI_NOTE_OFFSET}-{MIDI_NOTE_OFFSET + OCTAVES*12 -1}).")
+            midi_playing = False
+            # Ensure other playback vars are reset too if no notes found
+            parsed_midi_sequence = [] # Already empty if no notes, but good to be explicit
+            midi_sequence_current_event_index = 0
+            current_midi_playback_time = 0.0
+        return True
+    except Exception as e:
+        print(f"Error parsing MIDI file {filepath}: {e}")
+        parsed_midi_sequence = []
+        midi_playing = False
+        midi_sequence_current_event_index = 0
+        current_midi_playback_time = 0.0
+        return False
+
+# Function to draw import button
+def draw_import_button(surface):
+    pygame.draw.rect(surface, BUTTON_COLOR, BUTTON_RECT)
+    text_surf = BUTTON_FONT.render(BUTTON_TEXT, True, BUTTON_TEXT_COLOR)
+    text_rect = text_surf.get_rect(center=BUTTON_RECT.center)
+    surface.blit(text_surf, text_rect)
+
 # Screen dimensions (SCREEN_WIDTH already defined, SCREEN_HEIGHT needed)
 SCREEN_HEIGHT = 800
 
@@ -199,8 +280,36 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1: # Left mouse button
+                if BUTTON_RECT.collidepoint(event.pos):
+                    print("DEBUG: Import MIDI button clicked")
+                    # Setup tkinter root window (it won't be shown)
+                    root = tk.Tk()
+                    root.withdraw() # Hide the main tkinter window
+                    # Open file dialog
+                    midi_file_path = filedialog.askopenfilename(
+                        title="Select a MIDI file",
+                        filetypes=(("MIDI files", "*.mid *.midi"), ("All files", "*.*"))
+                    )
+                    if midi_file_path:
+                        print(f"DEBUG: Selected MIDI file: {midi_file_path}")
+                        parse_midi_file(midi_file_path) # Call the new parsing function
+                        # loaded_midi_path = midi_file_path # Storing path if needed elsewhere, parse_midi_file uses it directly
+                    root.destroy() # Clean up tkinter root
+
+        elif event.type == pygame.DROPFILE: # Event type for a dropped file
+            dropped_file_path = event.file # event.file contains the path
+            print(f"DEBUG: File dropped: {dropped_file_path}")
+            if dropped_file_path and (dropped_file_path.lower().endswith(".mid") or dropped_file_path.lower().endswith(".midi")):
+                # Call the existing MIDI parsing function
+                parse_midi_file(dropped_file_path)
+            else:
+                print(f"DEBUG: Dropped file '{dropped_file_path}' is not a .mid or .midi file. Ignoring.")
+
         # Add new event handlers here:
-        if event.type == pygame.KEYDOWN:
+        if event.type == pygame.KEYDOWN: # Note: Changed from elif to if, to allow multiple event types per frame
             if event.key in KEY_MAP:
                 piano_key_index = KEY_MAP[event.key]
                 active_pressed_keys.add(piano_key_index)
@@ -210,15 +319,44 @@ while running:
                 else:
                     print(f"Warning: Sound not available for key index {piano_key_index}")
 
-        if event.type == pygame.KEYUP:
+        elif event.type == pygame.KEYUP: # Changed from if to elif, assuming keydown and keyup for same key not in same event batch
             if event.key in KEY_MAP:
                 piano_key_index = KEY_MAP[event.key]
                 active_pressed_keys.discard(piano_key_index) # Use discard to avoid error if not found
+
+    # MIDI Playback Logic
+    if midi_playing and parsed_midi_sequence:
+        # Calculate elapsed time since playback started
+        current_system_time = pygame.time.get_ticks()
+        current_midi_playback_time = float(current_system_time - playback_start_system_time)
+
+        # Process MIDI events up to the current playback time
+        while (midi_sequence_current_event_index < len(parsed_midi_sequence) and
+               parsed_midi_sequence[midi_sequence_current_event_index]['time_ms'] <= current_midi_playback_time):
+
+            event = parsed_midi_sequence[midi_sequence_current_event_index]
+            piano_key_idx = event['key']
+
+            if event['type'] == 'note_on':
+                active_pressed_keys.add(piano_key_idx)
+                if 0 <= piano_key_idx < len(key_sounds) and key_sounds[piano_key_idx]:
+                    key_sounds[piano_key_idx].play()
+            elif event['type'] == 'note_off':
+                active_pressed_keys.discard(piano_key_idx)
+
+            midi_sequence_current_event_index += 1
+
+        # If all events have been processed, stop playback
+        if midi_sequence_current_event_index >= len(parsed_midi_sequence):
+            midi_playing = False
+            active_pressed_keys.clear() # Clear any lingering notes
+            print("DEBUG: MIDI playback finished.")
 
     # Drawing
     screen.fill(BACKGROUND_COLOR)  # Fill the screen with background color
     draw_white_keys(screen, active_pressed_keys)        # Draw the white keys
     draw_black_keys(screen, active_pressed_keys)        # Draw the black keys
+    draw_import_button(screen)                          # Draw the import button
 
     # Update the display
     pygame.display.flip()
