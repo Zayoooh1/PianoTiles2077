@@ -2,6 +2,7 @@ import pygame
 import math # For potential future sound generation
 import array # For creating sound buffer
 import mido # For MIDI support
+import random # For starfield
 import tkinter as tk
 from tkinter import filedialog
 
@@ -74,9 +75,10 @@ WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 GRAY = (200, 200, 200)
 DARK_GRAY = (100, 100, 100)
-BACKGROUND_COLOR = (230, 230, 250)
-PRESSED_WHITE_KEY_COLOR = (220, 220, 220)
-PRESSED_BLACK_KEY_COLOR = (50, 50, 50)
+BACKGROUND_COLOR = (10, 20, 40) # Dark Navy Blue
+ACCENT_COLOR = (0, 255, 255) # Cyan
+PRESSED_WHITE_KEY_COLOR = ACCENT_COLOR
+PRESSED_BLACK_KEY_COLOR = ACCENT_COLOR
 
 # Button parameters
 BUTTON_COLOR = (100, 149, 237)  # Cornflower blue
@@ -93,21 +95,39 @@ midi_playing = False
 midi_sequence_current_event_index = 0
 playback_start_system_time = 0
 
+# Starfield parameters
+NUM_STARS = 100
+STAR_COLOR = (200, 200, 200) # Pale white/gray for stars
+STAR_MAX_BRIGHTNESS = 150 # Max base brightness for a star
+STAR_MIN_BRIGHTNESS = 20  # Min brightness in twinkle cycle
+STAR_TWINKLE_SPEED = 0.001 # General speed multiplier for twinkle, individual stars vary
+
+stars = []
+
 # Keyboard parameters
 OCTAVES = 2
 NUM_WHITE_KEYS = OCTAVES * 7
-KEYBOARD_HEIGHT = 200
-WHITE_KEY_WIDTH = 1200 // NUM_WHITE_KEYS # Assuming SCREEN_WIDTH is 1200 for now
+KEYBOARD_HEIGHT = 200 # Height of the keyboard area
+# CONTROL_PANEL_HEIGHT will be defined after SCREEN_HEIGHT for proper Y calculation
+
+# Screen dimensions
+SCREEN_WIDTH = 1200
+SCREEN_HEIGHT = 800 # Defined earlier, good.
+
+# Control Panel parameters
+CONTROL_PANEL_HEIGHT = 60
+CONTROL_PANEL_COLOR = (30, 40, 60) # Slightly different dark shade for the panel
+KEYBOARD_Y_POSITION = SCREEN_HEIGHT - KEYBOARD_HEIGHT - CONTROL_PANEL_HEIGHT # Keyboard sits above control panel
+CONTROL_PANEL_Y_POSITION = SCREEN_HEIGHT - CONTROL_PANEL_HEIGHT # Panel at the very bottom
+CONTROL_PANEL_RECT = pygame.Rect(0, CONTROL_PANEL_Y_POSITION, SCREEN_WIDTH, CONTROL_PANEL_HEIGHT)
+
+
+WHITE_KEY_WIDTH = SCREEN_WIDTH // NUM_WHITE_KEYS # Use SCREEN_WIDTH after it's defined
 WHITE_KEY_HEIGHT = KEYBOARD_HEIGHT
 BLACK_KEY_WIDTH = WHITE_KEY_WIDTH * 0.6
 BLACK_KEY_HEIGHT = KEYBOARD_HEIGHT * 0.6
 KEY_SHADOW_OFFSET = 3
 
-# Screen dimensions
-SCREEN_WIDTH = 1200
-# Ensure SCREEN_WIDTH is defined before WHITE_KEY_WIDTH uses it.
-# Recalculate WHITE_KEY_WIDTH here if it was dependent on a default SCREEN_WIDTH before
-WHITE_KEY_WIDTH = SCREEN_WIDTH // NUM_WHITE_KEYS
 
 # Piano key global indices for a 2-octave (24-key) piano
 # White keys: C, D, E, F, G, A, B
@@ -129,7 +149,7 @@ for o in range(OCTAVES):
 
 # Function to draw white keys
 def draw_white_keys(surface, active_pressed_keys):
-    KEYBOARD_Y_POSITION = SCREEN_HEIGHT - KEYBOARD_HEIGHT
+    # KEYBOARD_Y_POSITION is now global
     for i in range(NUM_WHITE_KEYS): # i is the visual index of the white key (0 to NUM_WHITE_KEYS-1)
         current_key_global_index = WHITE_KEY_INDICES_ON_PIANO[i]
         x_position = i * WHITE_KEY_WIDTH
@@ -159,7 +179,7 @@ def draw_white_keys(surface, active_pressed_keys):
 
 # Function to draw black keys
 def draw_black_keys(surface, active_pressed_keys):
-    KEYBOARD_Y_POSITION = SCREEN_HEIGHT - KEYBOARD_HEIGHT
+    # KEYBOARD_Y_POSITION is now global
 
     # This list gives the visual white key index *after which* a black key appears.
     # This pattern repeats for each octave.
@@ -204,6 +224,51 @@ def draw_black_keys(surface, active_pressed_keys):
             BLACK_KEY_HEIGHT
         )
         pygame.draw.rect(surface, color, key_rect)
+
+# Function to draw control panel
+def draw_control_panel(surface):
+    pygame.draw.rect(surface, CONTROL_PANEL_COLOR, CONTROL_PANEL_RECT)
+    # Optional: Add a border with ACCENT_COLOR
+    pygame.draw.rect(surface, ACCENT_COLOR, CONTROL_PANEL_RECT, 1) # Border width 1
+
+# Function to initialize stars
+def init_stars(num_stars, screen_width, screen_height):
+    global stars
+    stars = []
+    for _ in range(num_stars):
+        x = random.randint(0, screen_width)
+        y = random.randint(0, screen_height)
+        base_brightness = random.randint(STAR_MIN_BRIGHTNESS + 20, STAR_MAX_BRIGHTNESS) # Star's peak brightness
+        time_offset = random.uniform(0, 2 * math.pi) # Random phase for sine wave
+        radius = random.uniform(0.5, 1.5)
+        # Individual speed multiplier for each star's twinkle
+        twinkle_speed_multiplier = random.uniform(0.5, 1.5)
+        stars.append({
+            'x': x, 'y': y,
+            'base_brightness': base_brightness,
+            'time_offset': time_offset,
+            'radius': radius,
+            'speed_multiplier': twinkle_speed_multiplier
+        })
+
+# Function to draw stars
+def draw_stars(surface):
+    current_time_ms = pygame.time.get_ticks()
+    for star in stars:
+        # Sine wave for twinkle: (sin(time * speed_factor + phase_offset) + 1) / 2 results in 0-1 range
+        oscillation_factor = (math.sin(current_time_ms * STAR_TWINKLE_SPEED * star['speed_multiplier'] + star['time_offset']) + 1) / 2
+
+        # Modulate brightness: STAR_MIN_BRIGHTNESS is the dimmest, star['base_brightness'] is the brightest
+        dynamic_brightness = STAR_MIN_BRIGHTNESS + (star['base_brightness'] - STAR_MIN_BRIGHTNESS) * oscillation_factor
+        final_brightness_component = int(max(0, min(255, dynamic_brightness))) # Clamp to 0-255
+
+        # Modulate STAR_COLOR by the brightness component (relative to 255)
+        r = int(STAR_COLOR[0] * (final_brightness_component / 255.0))
+        g = int(STAR_COLOR[1] * (final_brightness_component / 255.0))
+        b = int(STAR_COLOR[2] * (final_brightness_component / 255.0))
+        final_star_color = (max(0,min(r,255)), max(0,min(g,255)), max(0,min(b,255))) # Ensure valid color components
+
+        pygame.draw.circle(surface, final_star_color, (star['x'], star['y']), star['radius'])
 
 # Function to parse MIDI file
 def parse_midi_file(filepath):
@@ -269,6 +334,11 @@ SCREEN_HEIGHT = 800
 
 # Create the screen
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+
+# Initialize Stars
+# KEYBOARD_Y_POSITION is SCREEN_HEIGHT - KEYBOARD_HEIGHT, not strictly needed for init_stars if stars are everywhere
+init_stars(NUM_STARS, SCREEN_WIDTH, SCREEN_HEIGHT)
+
 
 # Set window title
 pygame.display.set_caption("Piano App")
@@ -354,9 +424,12 @@ while running:
 
     # Drawing
     screen.fill(BACKGROUND_COLOR)  # Fill the screen with background color
+    draw_stars(screen) # Draw stars on top of the background
+    # Button is drawn before keyboard and panel, so its y-pos (20) is unaffected by keyboard moving up
+    draw_import_button(screen)                          # Draw the import button
     draw_white_keys(screen, active_pressed_keys)        # Draw the white keys
     draw_black_keys(screen, active_pressed_keys)        # Draw the black keys
-    draw_import_button(screen)                          # Draw the import button
+    draw_control_panel(screen)                          # Draw the control panel
 
     # Update the display
     pygame.display.flip()
