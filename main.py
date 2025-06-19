@@ -95,8 +95,70 @@ midi_playing = False
 midi_sequence_current_event_index = 0
 playback_start_system_time = 0
 
+# Control Panel Elements - Colors and Font
+CONTROL_BUTTON_COLOR = ACCENT_COLOR
+CONTROL_BUTTON_TEXT_COLOR = (10, 20, 40) # Dark Navy Blue, for contrast on Accent Color
+CONTROL_BUTTON_ACTIVE_COLOR = (0, 200, 200) # Slightly dimmer cyan for active press
+SLIDER_TRACK_COLOR = (70, 80, 100)
+SLIDER_HANDLE_COLOR = ACCENT_COLOR
+CONTROL_PANEL_FONT_SIZE = 20
+# Ensure pygame.font.init() was called (it is, after pygame.init())
+CONTROL_PANEL_FONT = pygame.font.Font(None, CONTROL_PANEL_FONT_SIZE)
+
+# Control Panel Elements - Layout and Rectangles
+# Button dimensions and spacing
+_BUTTON_WIDTH = 80
+_BUTTON_HEIGHT = 40
+_BUTTON_SPACING = 15
+_TOTAL_BUTTONS_WIDTH = (4 * _BUTTON_WIDTH) + (3 * _BUTTON_SPACING)
+
+# Slider dimensions and spacing
+_SLIDER_WIDTH = 150
+_SLIDER_TRACK_HEIGHT = 10 # Height of the track itself
+_SLIDER_HANDLE_RADIUS = 8
+# _SLIDER_AREA_HEIGHT = 40 # Total vertical area for one slider with label
+_SLIDER_SPACING = 30 # Between sliders
+
+# Overall layout for controls within the panel
+_BUTTONS_SECTION_WIDTH = _TOTAL_BUTTONS_WIDTH
+_SLIDERS_SECTION_WIDTH = (2 * _SLIDER_WIDTH) + _SLIDER_SPACING
+_SECTION_SPACING = 50 # Space between buttons section and sliders section
+
+_TOTAL_CONTROLS_WIDTH = _BUTTONS_SECTION_WIDTH + _SECTION_SPACING + _SLIDERS_SECTION_WIDTH
+_CONTROLS_START_X = (SCREEN_WIDTH - _TOTAL_CONTROLS_WIDTH) // 2
+
+# Button Rectangles (Y position centered within the control panel)
+_BUTTON_Y = CONTROL_PANEL_Y_POSITION + (CONTROL_PANEL_HEIGHT - _BUTTON_HEIGHT) // 2
+_NEW_START_X_BUTTONS = _CONTROLS_START_X
+
+START_BUTTON_RECT = pygame.Rect(_NEW_START_X_BUTTONS, _BUTTON_Y, _BUTTON_WIDTH, _BUTTON_HEIGHT)
+PAUSE_BUTTON_RECT = pygame.Rect(_NEW_START_X_BUTTONS + _BUTTON_WIDTH + _BUTTON_SPACING, _BUTTON_Y, _BUTTON_WIDTH, _BUTTON_HEIGHT)
+STOP_BUTTON_RECT = pygame.Rect(_NEW_START_X_BUTTONS + 2 * (_BUTTON_WIDTH + _BUTTON_SPACING), _BUTTON_Y, _BUTTON_WIDTH, _BUTTON_HEIGHT)
+MODE_BUTTON_RECT = pygame.Rect(_NEW_START_X_BUTTONS + 3 * (_BUTTON_WIDTH + _BUTTON_SPACING), _BUTTON_Y, _BUTTON_WIDTH, _BUTTON_HEIGHT)
+
+# Slider Rectangles (for tracks, handles will be derived)
+_SLIDERS_GROUP_START_X = _NEW_START_X_BUTTONS + _BUTTONS_SECTION_WIDTH + _SECTION_SPACING
+_SLIDER_TRACK_Y_CENTER = CONTROL_PANEL_Y_POSITION + CONTROL_PANEL_HEIGHT // 2 # Vertically centered track
+
+TEMPO_SLIDER_TRACK_RECT = pygame.Rect(_SLIDERS_GROUP_START_X, _SLIDER_TRACK_Y_CENTER - _SLIDER_TRACK_HEIGHT // 2, _SLIDER_WIDTH, _SLIDER_TRACK_HEIGHT)
+VOLUME_SLIDER_TRACK_RECT = pygame.Rect(_SLIDERS_GROUP_START_X + _SLIDER_WIDTH + _SLIDER_SPACING, _SLIDER_TRACK_Y_CENTER - _SLIDER_TRACK_HEIGHT // 2, _SLIDER_WIDTH, _SLIDER_TRACK_HEIGHT)
+
+# Control Panel State Variables
+playback_status = "stopped"  # "playing", "paused", "stopped"
+current_mode = "presentation" # "presentation", "learning"
+tempo_bpm = 120  # Default BPM (e.g., min 30, max 240)
+global_volume = 0.8  # Default volume (0.0 to 1.0)
+
+active_button_name = None # Stores name like "start", "pause", etc. or None
+dragging_slider_name = None # Stores "tempo", "volume", or None
+
+
 # Starfield parameters
 NUM_STARS = 100
+MIN_TEMPO_BPM = 30
+MAX_TEMPO_BPM = 240
+MIN_VOLUME = 0.0
+MAX_VOLUME = 1.0
 STAR_COLOR = (200, 200, 200) # Pale white/gray for stars
 STAR_MAX_BRIGHTNESS = 150 # Max base brightness for a star
 STAR_MIN_BRIGHTNESS = 20  # Min brightness in twinkle cycle
@@ -225,11 +287,89 @@ def draw_black_keys(surface, active_pressed_keys):
         )
         pygame.draw.rect(surface, color, key_rect)
 
+# Generic function to draw a button
+def draw_button(surface, rect, text, base_color, text_color, font, is_pressed=False):
+    button_color = CONTROL_BUTTON_ACTIVE_COLOR if is_pressed else base_color
+    pygame.draw.rect(surface, button_color, rect, border_radius=5)
+
+    text_surf = font.render(text, True, text_color)
+    text_rect = text_surf.get_rect(center=rect.center)
+    surface.blit(text_surf, text_rect)
+
+    pygame.draw.rect(surface, ACCENT_COLOR, rect, 1, border_radius=5) # Thin accent border
+
+# Function to draw all control buttons
+def draw_control_buttons(surface):
+    # Start Button
+    is_start_pressed = (active_button_name == "start")
+    draw_button(surface, START_BUTTON_RECT, "Start", CONTROL_BUTTON_COLOR, CONTROL_BUTTON_TEXT_COLOR, CONTROL_PANEL_FONT, is_pressed=is_start_pressed)
+
+    # Pause Button
+    is_pause_pressed = (active_button_name == "pause")
+    draw_button(surface, PAUSE_BUTTON_RECT, "Pause", CONTROL_BUTTON_COLOR, CONTROL_BUTTON_TEXT_COLOR, CONTROL_PANEL_FONT, is_pressed=is_pause_pressed)
+
+    # Stop Button
+    is_stop_pressed = (active_button_name == "stop")
+    draw_button(surface, STOP_BUTTON_RECT, "Stop", CONTROL_BUTTON_COLOR, CONTROL_BUTTON_TEXT_COLOR, CONTROL_PANEL_FONT, is_pressed=is_stop_pressed)
+
+    # Mode Toggle Button
+    mode_display_text = "Present" if current_mode == "presentation" else "Learn"
+    is_mode_pressed = (active_button_name == "mode")
+    draw_button(surface, MODE_BUTTON_RECT, mode_display_text, CONTROL_BUTTON_COLOR, CONTROL_BUTTON_TEXT_COLOR, CONTROL_PANEL_FONT, is_pressed=is_mode_pressed)
+
 # Function to draw control panel
 def draw_control_panel(surface):
     pygame.draw.rect(surface, CONTROL_PANEL_COLOR, CONTROL_PANEL_RECT)
-    # Optional: Add a border with ACCENT_COLOR
-    pygame.draw.rect(surface, ACCENT_COLOR, CONTROL_PANEL_RECT, 1) # Border width 1
+    pygame.draw.rect(surface, ACCENT_COLOR, CONTROL_PANEL_RECT, 1) # Border for the panel itself
+    draw_control_buttons(surface) # Draw buttons on the panel
+    # Sliders will be drawn here later
+    draw_sliders(surface) # Call the new function here
+
+# Generic function to draw a slider
+def draw_slider(surface, track_rect, label, current_value, min_value, max_value,
+                track_color, handle_color, font, text_color, is_dragging=False):
+    # Draw the label
+    if label == "Tempo":
+         label_text = f"{label}: {int(current_value)} BPM"
+    elif label == "Volume":
+         label_text = f"{label}: {int(current_value*100)}%"
+    else: # Default formatting if needed for other sliders
+         label_text = f"{label}: {current_value:.0f}"
+
+    text_surf = font.render(label_text, True, text_color)
+    label_rect = text_surf.get_rect(centerx=track_rect.centerx, bottom=track_rect.top - 5)
+    surface.blit(text_surf, label_rect)
+
+    # Draw the slider track
+    pygame.draw.rect(surface, track_color, track_rect, border_radius=3)
+
+    # Calculate handle position
+    value_ratio = (current_value - min_value) / (max_value - min_value) if (max_value - min_value) != 0 else 0
+    handle_x = track_rect.left + int(value_ratio * track_rect.width)
+    # Clamp handle_x to be within the track bounds visually for the circle's center
+    handle_x = max(track_rect.left, min(track_rect.right, handle_x))
+    handle_y = track_rect.centery
+
+    current_handle_color = ACCENT_COLOR if is_dragging else handle_color
+    pygame.draw.circle(surface, current_handle_color, (handle_x, handle_y), _SLIDER_HANDLE_RADIUS) # Use defined global _SLIDER_HANDLE_RADIUS
+
+# Function to draw all sliders
+def draw_sliders(surface):
+    # Min/max values for tempo and volume (can be global constants later)
+    MIN_TEMPO_BPM = 30
+    MAX_TEMPO_BPM = 240
+    MIN_VOLUME = 0.0
+    MAX_VOLUME = 1.0
+
+    is_tempo_dragging = (dragging_slider_name == "tempo")
+    draw_slider(surface, TEMPO_SLIDER_TRACK_RECT, "Tempo", tempo_bpm, MIN_TEMPO_BPM, MAX_TEMPO_BPM,
+                SLIDER_TRACK_COLOR, SLIDER_HANDLE_COLOR, CONTROL_PANEL_FONT, ACCENT_COLOR,
+                is_dragging=is_tempo_dragging)
+
+    is_volume_dragging = (dragging_slider_name == "volume")
+    draw_slider(surface, VOLUME_SLIDER_TRACK_RECT, "Volume", global_volume, MIN_VOLUME, MAX_VOLUME,
+                SLIDER_TRACK_COLOR, SLIDER_HANDLE_COLOR, CONTROL_PANEL_FONT, ACCENT_COLOR,
+                is_dragging=is_volume_dragging)
 
 # Function to initialize stars
 def init_stars(num_stars, screen_width, screen_height):
@@ -353,8 +493,10 @@ while running:
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1: # Left mouse button
+                # Existing Import MIDI button click check
                 if BUTTON_RECT.collidepoint(event.pos):
                     print("DEBUG: Import MIDI button clicked")
+                    # active_button_name = "import_midi" # Optional: for visual feedback
                     # Setup tkinter root window (it won't be shown)
                     root = tk.Tk()
                     root.withdraw() # Hide the main tkinter window
@@ -365,12 +507,111 @@ while running:
                     )
                     if midi_file_path:
                         print(f"DEBUG: Selected MIDI file: {midi_file_path}")
-                        parse_midi_file(midi_file_path) # Call the new parsing function
-                        # loaded_midi_path = midi_file_path # Storing path if needed elsewhere, parse_midi_file uses it directly
-                    root.destroy() # Clean up tkinter root
+                        parse_midi_file(midi_file_path)
+                    root.destroy()
+
+                # New Control Panel Button Clicks
+                elif START_BUTTON_RECT.collidepoint(event.pos):
+                    active_button_name = "start"
+                elif PAUSE_BUTTON_RECT.collidepoint(event.pos):
+                    active_button_name = "pause"
+                elif STOP_BUTTON_RECT.collidepoint(event.pos):
+                    active_button_name = "stop"
+                elif MODE_BUTTON_RECT.collidepoint(event.pos):
+                    active_button_name = "mode"
+
+                # Slider Click Detection
+                # Define interactive rects for sliders (taller for easier clicking)
+                tempo_slider_interactive_rect = TEMPO_SLIDER_TRACK_RECT.inflate(0, 20)
+                volume_slider_interactive_rect = VOLUME_SLIDER_TRACK_RECT.inflate(0, 20)
+
+                if not active_button_name: # Only check sliders if no button was already targeted by this click
+                    if tempo_slider_interactive_rect.collidepoint(event.pos):
+                        dragging_slider_name = "tempo"
+                        value_ratio = (event.pos[0] - TEMPO_SLIDER_TRACK_RECT.left) / TEMPO_SLIDER_TRACK_RECT.width
+                        tempo_bpm = MIN_TEMPO_BPM + value_ratio * (MAX_TEMPO_BPM - MIN_TEMPO_BPM)
+                        tempo_bpm = int(max(MIN_TEMPO_BPM, min(MAX_TEMPO_BPM, tempo_bpm))) # Clamp and int
+                        print(f"DEBUG: Tempo changed to {tempo_bpm} BPM")
+
+                    elif volume_slider_interactive_rect.collidepoint(event.pos):
+                        dragging_slider_name = "volume"
+                        value_ratio = (event.pos[0] - VOLUME_SLIDER_TRACK_RECT.left) / VOLUME_SLIDER_TRACK_RECT.width
+                        global_volume = MIN_VOLUME + value_ratio * (MAX_VOLUME - MIN_VOLUME)
+                        global_volume = max(MIN_VOLUME, min(MAX_VOLUME, global_volume)) # Clamp
+                        print(f"DEBUG: Volume changed to {global_volume:.2f}")
+
+        elif event.type == pygame.MOUSEMOTION:
+            if dragging_slider_name == "tempo":
+                value_ratio = (event.pos[0] - TEMPO_SLIDER_TRACK_RECT.left) / TEMPO_SLIDER_TRACK_RECT.width
+                tempo_bpm = MIN_TEMPO_BPM + value_ratio * (MAX_TEMPO_BPM - MIN_TEMPO_BPM)
+                tempo_bpm = int(max(MIN_TEMPO_BPM, min(MAX_TEMPO_BPM, tempo_bpm))) # Clamp and int
+                # print(f"DEBUG: Tempo changed to {tempo_bpm} BPM") # Optional: reduce log spam
+
+            elif dragging_slider_name == "volume":
+                value_ratio = (event.pos[0] - VOLUME_SLIDER_TRACK_RECT.left) / VOLUME_SLIDER_TRACK_RECT.width
+                global_volume = MIN_VOLUME + value_ratio * (MAX_VOLUME - MIN_VOLUME)
+                global_volume = max(MIN_VOLUME, min(MAX_VOLUME, global_volume)) # Clamp
+                # print(f"DEBUG: Volume changed to {global_volume:.2f}") # Optional: reduce log spam
+
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1: # Left mouse button
+                # Button release logic
+                if active_button_name == "start" and START_BUTTON_RECT.collidepoint(event.pos):
+                    print("DEBUG: Start button released")
+                    if parsed_midi_sequence:
+                        if playback_status == "stopped":
+                            current_midi_playback_time = 0.0
+                            midi_sequence_current_event_index = 0
+                            playback_start_system_time = pygame.time.get_ticks() # Start fresh from 0
+                            active_pressed_keys.clear()
+                        elif playback_status == "paused":
+                            # Adjust start time to seamlessly resume from current_midi_playback_time
+                            playback_start_system_time = pygame.time.get_ticks() - int(current_midi_playback_time)
+
+                        playback_status = "playing"
+                        midi_playing = True # This flag enables the MIDI processing block
+                    else:
+                        print("DEBUG: No MIDI loaded, Start does nothing.")
+                        playback_status = "stopped"
+                        midi_playing = False
+
+                elif active_button_name == "pause" and PAUSE_BUTTON_RECT.collidepoint(event.pos):
+                    print("DEBUG: Pause button released")
+                    if playback_status == "playing":
+                        playback_status = "paused"
+                        # midi_playing remains true, but the playback loop conditional on "playing" status will halt it.
+                        # current_midi_playback_time will hold the time at which it was paused.
+
+
+                elif active_button_name == "stop" and STOP_BUTTON_RECT.collidepoint(event.pos):
+                    print("DEBUG: Stop button released")
+                    playback_status = "stopped"
+                    midi_playing = False
+                    active_pressed_keys.clear()
+                    current_midi_playback_time = 0.0 # Reset playback head
+                    midi_sequence_current_event_index = 0
+                    # playback_start_system_time is not critical to reset here, Start will handle it.
+
+                elif active_button_name == "mode" and MODE_BUTTON_RECT.collidepoint(event.pos):
+                    if current_mode == "presentation":
+                        current_mode = "learning"
+                    else:
+                        current_mode = "presentation"
+                    print(f"DEBUG: Mode changed to {current_mode}")
+
+                # Reset active_button_name after all specific button checks
+                if active_button_name is not None: # Check if a button was indeed active
+                    active_button_name = None
+
+                # Reset dragging_slider_name if a slider was being dragged
+                if dragging_slider_name is not None:
+                    # Final print on release:
+                    if dragging_slider_name == "tempo": print(f"DEBUG: Tempo set to {tempo_bpm} BPM")
+                    elif dragging_slider_name == "volume": print(f"DEBUG: Volume set to {global_volume:.2f}")
+                    dragging_slider_name = None
 
         elif event.type == pygame.DROPFILE: # Event type for a dropped file
-            dropped_file_path = event.file # event.file contains the path
+            dropped_file_path = event.file
             print(f"DEBUG: File dropped: {dropped_file_path}")
             if dropped_file_path and (dropped_file_path.lower().endswith(".mid") or dropped_file_path.lower().endswith(".midi")):
                 # Call the existing MIDI parsing function
@@ -383,13 +624,14 @@ while running:
             if event.key in KEY_MAP:
                 piano_key_index = KEY_MAP[event.key]
                 active_pressed_keys.add(piano_key_index)
-                # Play sound
+                # Play sound for manual key press
                 if piano_key_index < len(key_sounds) and key_sounds[piano_key_index]:
+                    key_sounds[piano_key_index].set_volume(global_volume) # Apply global volume
                     key_sounds[piano_key_index].play()
                 else:
                     print(f"Warning: Sound not available for key index {piano_key_index}")
 
-        elif event.type == pygame.KEYUP: # Changed from if to elif, assuming keydown and keyup for same key not in same event batch
+        elif event.type == pygame.KEYUP:
             if event.key in KEY_MAP:
                 piano_key_index = KEY_MAP[event.key]
                 active_pressed_keys.discard(piano_key_index) # Use discard to avoid error if not found
