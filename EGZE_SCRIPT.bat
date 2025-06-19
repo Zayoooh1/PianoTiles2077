@@ -9,7 +9,7 @@ pip install --upgrade pyinstaller
 
 echo.
 echo Rozpoczynanie budowania PianoTiles.exe...
-echo Komenda: pyinstaller --name "PianoTiles" --onefile --windowed main.py
+echo Komenda: pyinstaller --name "PianoTiles" --onefile main.py
 
 pyinstaller --name "PianoTiles" --onefile --windowed main.py
 
