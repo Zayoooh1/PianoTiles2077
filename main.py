@@ -91,9 +91,19 @@ BUTTON_FONT = pygame.font.Font(None, 30) # Default font, size 30
 loaded_midi_path = None
 parsed_midi_sequence = []
 current_midi_playback_time = 0.0
+total_midi_duration_ms = 0 # Will be updated when MIDI is parsed
 midi_playing = False
 midi_sequence_current_event_index = 0
 playback_start_system_time = 0
+
+# Progress Bar properties
+PROGRESS_BAR_HEIGHT = 10
+PROGRESS_BAR_Y = CONTROL_PANEL_RECT.top + 10 # 10px padding from top of panel
+PROGRESS_BAR_WIDTH = CONTROL_PANEL_RECT.width - 40 # With some horizontal padding
+PROGRESS_BAR_X = (CONTROL_PANEL_RECT.width - PROGRESS_BAR_WIDTH) // 2 # Centered horizontally
+PROGRESS_BAR_RECT = pygame.Rect(PROGRESS_BAR_X, PROGRESS_BAR_Y, PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT)
+PROGRESS_BAR_COLOR = ACCENT_COLOR
+PROGRESS_BAR_BACKGROUND_COLOR = (50, 60, 80)
 
 # Control Panel Elements - Colors and Font
 CONTROL_BUTTON_COLOR = ACCENT_COLOR
@@ -165,6 +175,18 @@ STAR_MIN_BRIGHTNESS = 20  # Min brightness in twinkle cycle
 STAR_TWINKLE_SPEED = 0.001 # General speed multiplier for twinkle, individual stars vary
 
 stars = []
+
+# Shockwave Effect Parameters
+SHOCKWAVE_MAX_RADIUS = 60
+SHOCKWAVE_EXPANSION_SPEED = 1.5 # Pixels per frame
+SHOCKWAVE_INITIAL_OPACITY = 255
+SHOCKWAVE_FADE_RATE = 4 # Opacity decrease per frame
+SHOCKWAVE_NUM_RINGS = 3
+SHOCKWAVE_RING_SPACING = 10 # Spacing between rings
+SHOCKWAVE_COLOR = ACCENT_COLOR
+
+active_shockwaves = [] # List to store active shockwave animations
+all_piano_key_rects = [None] * (OCTAVES * 12) # For 2 octaves, 24 keys
 
 # Keyboard parameters
 OCTAVES = 2
@@ -322,8 +344,64 @@ def draw_control_panel(surface):
     pygame.draw.rect(surface, CONTROL_PANEL_COLOR, CONTROL_PANEL_RECT)
     pygame.draw.rect(surface, ACCENT_COLOR, CONTROL_PANEL_RECT, 1) # Border for the panel itself
     draw_control_buttons(surface) # Draw buttons on the panel
-    # Sliders will be drawn here later
-    draw_sliders(surface) # Call the new function here
+    draw_sliders(surface)
+
+    # Draw Progress Bar
+    draw_progress_bar(surface, current_midi_playback_time, total_midi_duration_ms,
+                        PROGRESS_BAR_RECT, PROGRESS_BAR_COLOR, PROGRESS_BAR_BACKGROUND_COLOR)
+
+# Function to trigger a shockwave
+def trigger_shockwave(center_x, center_y):
+    global active_shockwaves
+    if len(active_shockwaves) < 20: # Limit concurrent shockwaves
+        active_shockwaves.append({
+            'center_x': float(center_x),
+            'center_y': float(center_y),
+            'current_radius': 0.0,
+            'current_opacity': float(SHOCKWAVE_INITIAL_OPACITY)
+        })
+
+# Function to update and draw shockwaves
+def update_and_draw_shockwaves(surface):
+    global active_shockwaves
+    new_shockwaves = []
+
+    for wave in active_shockwaves:
+        wave['current_radius'] += SHOCKWAVE_EXPANSION_SPEED
+        wave['current_opacity'] -= SHOCKWAVE_FADE_RATE
+
+        if wave['current_opacity'] > 0 and wave['current_radius'] < SHOCKWAVE_MAX_RADIUS:
+            new_shockwaves.append(wave)
+
+            brightness_ratio = wave['current_opacity'] / SHOCKWAVE_INITIAL_OPACITY
+            if brightness_ratio <= 0: continue
+
+            current_base_ring_color = (
+                int(SHOCKWAVE_COLOR[0] * brightness_ratio),
+                int(SHOCKWAVE_COLOR[1] * brightness_ratio),
+                int(SHOCKWAVE_COLOR[2] * brightness_ratio)
+            )
+
+            for i in range(SHOCKWAVE_NUM_RINGS):
+                radius = wave['current_radius'] - (i * SHOCKWAVE_RING_SPACING)
+                ring_thickness = 2 # Can be a constant
+                if radius > ring_thickness : # Ensure radius is large enough for a visible ring
+                     pygame.draw.circle(surface, current_base_ring_color,
+                                       (int(wave['center_x']), int(wave['center_y'])),
+                                       int(radius), ring_thickness)
+
+    active_shockwaves = new_shockwaves
+
+# Generic function to draw a progress bar
+def draw_progress_bar(surface, current_time_ms, total_time_ms, bar_rect, filled_color, background_color):
+    pygame.draw.rect(surface, background_color, bar_rect, border_radius=3)
+    if total_time_ms > 0 and current_time_ms > 0:
+        progress_ratio = min(current_time_ms / total_time_ms, 1.0)
+        filled_width = int(bar_rect.width * progress_ratio)
+        if filled_width > 0:
+            filled_rect = pygame.Rect(bar_rect.left, bar_rect.top, filled_width, bar_rect.height)
+            pygame.draw.rect(surface, filled_color, filled_rect, border_radius=3)
+    pygame.draw.rect(surface, ACCENT_COLOR, bar_rect, 1, border_radius=3) # Border
 
 # Generic function to draw a slider
 def draw_slider(surface, track_rect, label, current_value, min_value, max_value,
@@ -410,10 +488,59 @@ def draw_stars(surface):
 
         pygame.draw.circle(surface, final_star_color, (star['x'], star['y']), star['radius'])
 
+# Function to initialize the global all_piano_key_rects list
+def initialize_key_rects():
+    global all_piano_key_rects
+
+    # White keys: piano indices 0, 2, 4, 5, 7, 9, 11 for 1st octave, then +12 for 2nd, etc.
+    # There are NUM_WHITE_KEYS in total (e.g., 14 for 2 octaves)
+    white_key_piano_indices = []
+    for o in range(OCTAVES):
+        octave_base = o * 12
+        white_key_piano_indices.extend([
+            octave_base + 0, octave_base + 2, octave_base + 4,
+            octave_base + 5, octave_base + 7, octave_base + 9, octave_base + 11
+        ])
+
+    for i, piano_idx in enumerate(white_key_piano_indices):
+        # 'i' here is the visual index of the white key (0 to NUM_WHITE_KEYS-1)
+        x_pos = i * WHITE_KEY_WIDTH
+        if piano_idx < len(all_piano_key_rects):
+             all_piano_key_rects[piano_idx] = pygame.Rect(x_pos, KEYBOARD_Y_POSITION, WHITE_KEY_WIDTH, WHITE_KEY_HEIGHT)
+
+    # Black keys: piano indices 1, 3, 6, 8, 10 for 1st octave, then +12 for 2nd, etc.
+    black_key_piano_indices = []
+    # Visual indices of white keys that black keys are associated with (0-indexed)
+    # C(0), D(1), E(2), F(3), G(4), A(5), B(6) for one octave
+    # Black keys are after C, D, F, G, A (visual white key indices 0,1, 3,4,5)
+    assoc_white_visual_indices = []
+    for o in range(OCTAVES):
+        octave_base_piano_idx = o * 12
+        octave_base_white_visual_idx = o * 7
+        black_key_piano_indices.extend([
+            octave_base_piano_idx + 1, octave_base_piano_idx + 3,
+            octave_base_piano_idx + 6, octave_base_piano_idx + 8, octave_base_piano_idx + 10
+        ])
+        assoc_white_visual_indices.extend([
+            octave_base_white_visual_idx + 0, octave_base_white_visual_idx + 1,
+            octave_base_white_visual_idx + 3, octave_base_white_visual_idx + 4, octave_base_white_visual_idx + 5
+        ])
+
+    for i, bk_piano_idx in enumerate(black_key_piano_indices):
+        # 'i' is the index in black_key_piano_indices (0 to NUM_BLACK_KEYS-1)
+        # 'bk_piano_idx' is the global piano key index (1, 3, 6, ...)
+        # 'assoc_wv_idx' is the visual index of the white key that this black key is to the right of.
+        assoc_wv_idx = assoc_white_visual_indices[i]
+
+        x_pos = (assoc_wv_idx + 1) * WHITE_KEY_WIDTH - (BLACK_KEY_WIDTH / 2)
+        if bk_piano_idx < len(all_piano_key_rects):
+            all_piano_key_rects[bk_piano_idx] = pygame.Rect(x_pos, KEYBOARD_Y_POSITION, BLACK_KEY_WIDTH, BLACK_KEY_HEIGHT)
+
 # Function to parse MIDI file
 def parse_midi_file(filepath):
     global parsed_midi_sequence, midi_playing, current_midi_playback_time, active_pressed_keys
-    global midi_sequence_current_event_index, playback_start_system_time # Add new globals
+    global midi_sequence_current_event_index, playback_start_system_time
+    global total_midi_duration_ms # Ensure total_midi_duration_ms can be modified
     try:
         mid = mido.MidiFile(filepath)
         parsed_midi_sequence = []
@@ -440,23 +567,28 @@ def parse_midi_file(filepath):
         parsed_midi_sequence.sort(key=lambda x: x['time_ms'])
 
         if parsed_midi_sequence:
-            print(f"DEBUG: Parsed {len(parsed_midi_sequence)} MIDI events from {filepath}.")
+            # Sort by time to ensure the last event is truly the last chronologically
+            parsed_midi_sequence.sort(key=lambda x: x['time_ms'])
+            total_midi_duration_ms = parsed_midi_sequence[-1]['time_ms'] if parsed_midi_sequence else 0
+
+            print(f"DEBUG: Parsed {len(parsed_midi_sequence)} MIDI events. Total duration: {total_midi_duration_ms} ms.")
             midi_playing = True
             current_midi_playback_time = 0.0
             midi_sequence_current_event_index = 0
             playback_start_system_time = pygame.time.get_ticks()
             active_pressed_keys.clear()
         else:
-            print(f"DEBUG: No playable notes found in MIDI file or notes are outside the {OCTAVES*12}-key range (MIDI {MIDI_NOTE_OFFSET}-{MIDI_NOTE_OFFSET + OCTAVES*12 -1}).")
+            print(f"DEBUG: No playable notes found in MIDI file or notes are outside the {OCTAVES*12}-key range (MIDI {MIDI_NOTE_OFFSET}-{MIDI_NOTE_OFFSET + OCTAVES*12 -1}). Total duration set to 0.")
+            total_midi_duration_ms = 0 # Reset if no notes
             midi_playing = False
-            # Ensure other playback vars are reset too if no notes found
-            parsed_midi_sequence = [] # Already empty if no notes, but good to be explicit
+            parsed_midi_sequence = []
             midi_sequence_current_event_index = 0
             current_midi_playback_time = 0.0
         return True
     except Exception as e:
         print(f"Error parsing MIDI file {filepath}: {e}")
         parsed_midi_sequence = []
+        total_midi_duration_ms = 0 # Reset on error
         midi_playing = False
         midi_sequence_current_event_index = 0
         current_midi_playback_time = 0.0
@@ -475,9 +607,9 @@ SCREEN_HEIGHT = 800
 # Create the screen
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 
-# Initialize Stars
-# KEYBOARD_Y_POSITION is SCREEN_HEIGHT - KEYBOARD_HEIGHT, not strictly needed for init_stars if stars are everywhere
+# Initialize Stars & Key Rects (after screen and layout constants are set)
 init_stars(NUM_STARS, SCREEN_WIDTH, SCREEN_HEIGHT)
+initialize_key_rects() # Call to pre-calculate key rects
 
 
 # Set window title
@@ -620,16 +752,26 @@ while running:
                 print(f"DEBUG: Dropped file '{dropped_file_path}' is not a .mid or .midi file. Ignoring.")
 
         # Add new event handlers here:
-        if event.type == pygame.KEYDOWN: # Note: Changed from elif to if, to allow multiple event types per frame
+        if event.type == pygame.KEYDOWN:
             if event.key in KEY_MAP:
                 piano_key_index = KEY_MAP[event.key]
                 active_pressed_keys.add(piano_key_index)
+
                 # Play sound for manual key press
                 if piano_key_index < len(key_sounds) and key_sounds[piano_key_index]:
-                    key_sounds[piano_key_index].set_volume(global_volume) # Apply global volume
+                    key_sounds[piano_key_index].set_volume(global_volume)
                     key_sounds[piano_key_index].play()
                 else:
                     print(f"Warning: Sound not available for key index {piano_key_index}")
+
+                # Trigger shockwave in learning mode
+                if current_mode == "learning":
+                    if 0 <= piano_key_index < len(all_piano_key_rects) and all_piano_key_rects[piano_key_index] is not None:
+                        key_rect = all_piano_key_rects[piano_key_index]
+                        center_x, center_y = key_rect.centerx, key_rect.centery
+                        trigger_shockwave(center_x, center_y)
+                    else:
+                        print(f"Warning: Rect not found for piano key index {piano_key_index} for shockwave.")
 
         elif event.type == pygame.KEYUP:
             if event.key in KEY_MAP:
@@ -667,10 +809,10 @@ while running:
     # Drawing
     screen.fill(BACKGROUND_COLOR)  # Fill the screen with background color
     draw_stars(screen) # Draw stars on top of the background
-    # Button is drawn before keyboard and panel, so its y-pos (20) is unaffected by keyboard moving up
     draw_import_button(screen)                          # Draw the import button
     draw_white_keys(screen, active_pressed_keys)        # Draw the white keys
     draw_black_keys(screen, active_pressed_keys)        # Draw the black keys
+    update_and_draw_shockwaves(screen)                  # Draw shockwaves on top of keys
     draw_control_panel(screen)                          # Draw the control panel
 
     # Update the display
